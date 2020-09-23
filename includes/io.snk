@@ -1,0 +1,125 @@
+import pandas as pd
+import os
+import re
+
+
+def read_filter2(excel_file):
+    '''
+    takes the excel file and outputs a dict with 
+    {
+        'filter2': filter2_df,
+        'dropped': dropped_df
+    }
+    '''
+
+    dfs = {}
+    for f in ['filter2', 'dropped']:
+        # sorting for TVAF would be nice --> TVAF has to be excluded later
+        mut_df = pd.read_excel(excel_file, sheet_name=f).loc[:,[
+            'Project', 'Sample', 'Chr', 'Start', 'End', 'Ref', 'Alt', 'TVAF'
+            ]]
+        mut_df['Sample'] = mut_df['Sample'].astype(str).str.lstrip('0')
+        dfs[f] = mut_df
+    return dfs
+
+
+def get_sample(file):
+    '''
+    flattens any 30A12 to 30A etc
+    '''
+    sample = file.split('_')[0].lstrip("0")
+    suffix = file.split('_')[1].split(".")[0]
+    if "B" in suffix:
+        return sample + "B", "normal"
+    if "A" in suffix:
+        return sample + "A", "tumor"
+    if "R" in suffix:   
+        return sample + "R", "tumor"
+
+
+def is_indexed(file):
+    index1 = file.replace("bam", "bai")
+    index2 = file + ".bai"
+    return os.path.isfile(index1) or os.path.isfile(index2)
+
+
+def get_bam_list(input_dir, project_list):
+    # get the bam_list for the entire folder
+    bam_df = pd.DataFrame()
+    for project in project_list:
+        project_folder = os.path.join(input_dir, project)
+        if os.path.isdir(project_folder):
+            for folder, _ ,files in os.walk(project_folder):
+                if "bamfinal" in folder:
+                    for file in files:
+                        if file.endswith('.bam'):
+                            sample, _type = get_sample(file)
+                            isindexed = is_indexed(os.path.join(folder, file))
+                            short_path = os.path.join(folder, file).replace(f"{input_dir}/", "")
+                            bam_df = bam_df.append(pd.Series({'Sample':sample, 'Type': _type, 'Project':project, 'Path': short_path, 'isIndexed': isindexed}), ignore_index=True)
+    bam_df['isIndexed'] = bam_df['isIndexed'].astype(bool)    
+    return bam_df.loc[:, ['Project', 'Sample', 'Type', 'Path', 'isIndexed']].sort_values(['Project', 'Sample'])
+    
+
+def get_sample_df(mut_df, input_dir='.', all_projects=[]):
+    '''
+    looks through all samples in mut_df and finds the corresponding tumor and normal bam files in the input_directory
+    '''
+    if not len(all_projects):
+        print('no folder is given')
+
+    bam_df = get_bam_list(input_dir, all_projects)
+    # extract the samples from mut_df into sample_df
+    sample_df = mut_df.groupby(['Project', 'Sample']).first().reset_index().loc[:,['Project', 'Sample']]
+    sample_df['Sample'] = sample_df['Sample'].astype(str).str.lstrip('0')
+    # find tumor samples
+    tumor_df = sample_df.copy()
+    tumor_df['Type'] = 'tumor'
+    # rename samples that do not have "R" to "..A"
+    tumor_df.loc[~tumor_df['Sample'].str.endswith("R"), 'Sample'] = tumor_df['Sample'] + "A"  
+    # look for respective tumor bam files in 
+    tumor_bam = tumor_df.merge(bam_df, on=['Project', 'Sample', 'Type'])
+
+    # find normal samples
+    # look for same samples (R stripped) but as normals and not bound to projects
+    normal_df = sample_df.copy().loc[:,['Sample']]
+    normal_df['Sample'] = normal_df['Sample'].str.replace("R", "").str.replace("A", "") + "B"
+    normal_df['Type'] = 'normal'
+    normal_bam = normal_df.merge(bam_df, on=['Sample', 'Type']).drop_duplicates()
+
+    # combine for full sample list
+    sample_df = pd.concat([normal_bam, tumor_bam], sort=False).sort_values(['Sample', 'Type'])
+    return sample_df
+
+
+def get_TN_sample_list(sample_df):
+    '''
+    returns the list of all tumor samples and a special tumor-B file indicating the respective normal
+    '''
+    
+    t_list = list(sample_df.query('Type == "tumor"')['Sample'])
+    n_list = [sample + "-B" for sample in t_list]
+    return t_list + n_list
+
+
+def get_bam_path(w, tumor=True):
+    sample_df = sample_dfs[w.filter]
+    # use either the sample wildcard or transform it into the normal name
+    sample = w.sample if tumor else get_normal(w.sample)
+    print("normal:", sample, sample_df)
+    bam_path = sample_df.loc[sample_df['Sample'] == sample, "Path"].iloc[0]
+    return os.path.join(config['inputdir'], bam_path)
+
+
+def get_normal(tumor):
+    '''
+    for every normal, retrieve the respective normal bam path
+    '''
+    return tumor.replace('A', '').replace('R', '') + "B"
+
+
+def get_normal_bam_path(w):
+    '''
+    going the detour for normal bams by providing the tumor= False attribute to get_bam_path
+    '''
+    return get_bam_path(w, tumor=False)

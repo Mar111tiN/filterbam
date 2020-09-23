@@ -1,0 +1,118 @@
+from subprocess import Popen, PIPE, DEVNULL
+from io import StringIO
+import pandas as pd
+import os
+
+
+ansii_colors = {
+          'magenta': '[1;35;2m',
+          'green': '[1;9;2m',
+          'red': '[1;31;1m',
+          'cyan': '[1;36;1m',
+          'gray': '[1;30;1m',
+          'black': '[0m'
+          }
+
+colors = {
+        'process': ansii_colors['green'],
+        'time': ansii_colors['magenta'],
+        'normal': ansii_colors['gray'],
+        'warning': ansii_colors['red'],
+        'success': ansii_colors['cyan']
+        }
+
+
+def show_output(text, color='normal', multi=False, time=False):
+    '''
+    get colored output to the terminal
+    '''
+    time = f"\033{colors['time']}{dt.now().strftime('%H:%M:%S')}\033[0m : " if time else ''
+    proc = f"\033{colors['process']}Process {os.getpid()}\033[0m : " if multi else ''
+    text = f"\033{colors[color]}{text}\033[0m"
+    print(time + proc + text)
+
+
+def show_command(command, config, multi=True):
+    '''
+    prints the command line if debugging is active
+    '''
+
+    if config['debug_mode']:
+        proc = f"\033[92mProcess {os.getpid()}\033[0m : " if multi else ""
+        if len(command) > 1:
+            command = f"\033[1m$ {' '.join(command)}\033[0m"
+
+        print(proc + command)
+    return
+
+# ############ FILTER_BAM UTILS ########################################################
+def reduce_regions(df, padding):
+    '''
+    takes a mutation list and returns a region list using padding
+    overlapping regions are reduced to one using the gap strategy
+    '''
+
+    df['Start'] = df['Start'] - padding
+    df['End'] = df['End'] + padding
+    # find the break points
+    # if Start is greater than previous End (using shift) or Chroms change, this is a gap --> df['gap'] = 1
+    df['gap'] = (df['Start'].gt(df['End'].shift()) | (df['Chr'] != df['Chr'].shift())).astype('int')
+    # id different reads according to gap
+    # cumulative sum does not increase at df['gap'] == 0 and so these consecutive stretches are grouped together
+    df['gap'] = df['gap'].cumsum()
+    # groupby the coverage break group and condense individual coverage islands
+
+    df = df.groupby('gap').agg({'Chr': 'first', 'Start': 'min', 'End': 'max'})
+    return df.reset_index('gap').drop(columns='gap')
+
+
+def mut2bed(mut_df, padding, output):
+    # get the bedfile with padded and collapsed regions
+    bed_df = reduce_regions(mut_df, padding)
+    print("bed_df:", bed_df)
+    # write bed_df to file
+    bed_df.to_csv(output, index=False, sep='\t', header=False)
+    return output
+
+
+def get_mut_bed(_, input, output):
+    '''
+    serves as a params function creating and returning the bed file for the samtools view
+    '''
+
+    # make the bedfile folder
+    folder = os.path.dirname(output.bam.replace("bam", "bed"))
+
+    if not os.path.exists(folder):
+        print(f"Creating folder {folder}")
+        os.makedirs(folder)
+
+    # load the configs
+    conf = config['filter_bam']
+    padding = conf['padding']
+
+    # load and sort the mutation file from the IGVnav file
+    mut_df = pd.read_csv(input.IGVnav, sep='\t').iloc[:,:3]
+    mut_df['Chr'] = "chr" + mut_df['Chr'].astype(str)
+    mut_df = sort_df(mut_df)
+    print("mut_df: ", mut_df)
+
+    output_file = output.bam.replace("bam", "bed")
+    if not len(mut_df.index):
+        mut_df.to_csv(output_file, index=False, sep='\t', header=False)
+        return output_file
+
+    bed_file = mut2bed(mut_df, padding, output_file)
+
+    return bed_file
+
+
+def sort_df(df, cols={'Chr': True, 'Start': True}):
+    '''
+    helper for sorting dfs for chromosomes using Chr, Start + cols in cols
+    '''
+    # make Chr column categorical for sorting .. and sort
+    chrom_list = [f"chr{i}" for i in range(23)] + ['chrX', 'chrY']
+
+    df['Chr'] = pd.Categorical(df['Chr'], chrom_list)
+    return df.sort_values(list(cols.keys()), ascending=list(cols.values()))

@@ -1,0 +1,58 @@
+rule IGVnav:
+    output:
+        IGVnav = "IGVnav/{sample}.{filter}.txt"
+    threads:
+        1
+    run:
+        # selectinng the right filter2 file from the configs
+        sample = wildcards.sample.replace("A", "")
+        # IGVnav file is TVAF sorted
+        df = mut_dfs[wildcards.filter].query('Sample == @sample').sort_values('TVAF', ascending=False)
+        for col in ['Call', 'Tags', 'Notes']:
+            df[col] = ''
+
+        # ????
+        # is it neccessary to delete the chr ???
+        df.loc[:, 'Chr'] = df['Chr'].str.replace('chr', '')
+        df.loc[:,['Chr', 'Start', 'End', 'Ref', 'Alt', 'Call', 'Tags', 'Notes']].to_csv(str(output.IGVnav), sep='\t', index=False)
+        print(f"Written to {output.IGVnav}")
+
+
+# ################# FILTER ###################################################
+
+rule filter_tumor_bam:
+    input:
+        IGVnav = "IGVnav/{sample}.{filter}.txt"
+    output: 
+        bam = "filterbam/{sample}.{filter}.bam",
+        bai = "filterbam/{sample}.{filter}.bai",
+    conda:
+        f"../env/align-env.yml"
+    threads:
+        config['filter_bam']['threads']
+    params:
+        bam = get_bam_path,
+        mut_bedfile = get_mut_bed
+    shell:
+        "samtools view -bhL {params.mut_bedfile} {params.bam} > {output.bam}; "
+        "picard BuildBamIndex INPUT={output.bam}; "
+        "rm -f {params.mut_bedfile}"
+
+
+rule filter_normal_bam:
+    input:
+        IGVnav = "IGVnav/{sample}.{filter}.txt"
+    output: 
+        bam = "filterbam/{sample}-B.{filter}.bam",
+        bai = "filterbam/{sample}-B.{filter}.bai",
+    conda:
+        f"../env/align-env.yml"
+    threads:
+        config['filter_bam']['threads']
+    params:
+        bam = get_normal_bam_path,
+        mut_bedfile = get_mut_bed
+    shell:
+        "samtools view -bhL {params.mut_bedfile} {params.bam} > {output.bam}; "
+        "picard BuildBamIndex INPUT={output.bam}; "
+        "rm -f {params.mut_bedfile}"

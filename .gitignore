@@ -1,0 +1,9 @@
+.snakemake
+.ipynb_checkpoints
+.DS_Store
+.vscode/
+__pycache__
+slogs/
+config_*.yaml
+!config_devel_rerun.yaml
+!config_*master.yaml

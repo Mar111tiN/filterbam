@@ -1,0 +1,21 @@
+inputdir: /fast/users/szyskam_c/work/results
+    # the folder where I can find the final bamfiles to be used as source for the filterbams
+    # the bamfiles should be placed into individual project folders <inputdir>/project
+filter2_file: /fast/users/szyskam_c/snakes/develop/filterbam_snake/filterbam_test.xlsx
+projects:
+    - P483
+    - P559
+    - P615
+    - P625
+    - P665
+    - P685
+    - Pmerge
+workdir: /fast/users/szyskam_c/scratch/develop/filterbam # here your filterbams are created
+snakedir: /fast/users/szyskam_c/snakes/develop/filterbam_snake
+cleanup: True
+filter_bam:
+    threads: 1
+    stringency_for_bam: loose # from which filter2 should the filter bam be generated
+    stringency_for_IGVnav: moderate
+    padding: 200
+    folder: filterbam
